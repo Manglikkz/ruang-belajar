@@ -1,0 +1,6 @@
+{
+  "name": "Ruang Belajar AI",
+  "description": "Platform belajar cerdas untuk pelajar Indonesia: ubah materi belajar menjadi ringkasan, flashcard, kuis interaktif, dan mind map visual.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

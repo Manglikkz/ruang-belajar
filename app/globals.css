@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+  .transform-style-3d {
+    transform-style: preserve-3d;
+  }
+  .backface-hidden {
+    backface-visibility: hidden;
+  }
+  .rotate-y-180 {
+    transform: rotateY(180deg);
+  }
+}
+
+.bg-dotted-grid {
+  background-image: radial-gradient(#cbd5e1 1.5px, transparent 1.5px);
+  background-size: 24px 24px;
+}
+
+@keyframes floatMascot {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-8px) rotate(-1.5deg);
+  }
+  75% {
+    transform: translateY(-4px) rotate(1.5deg);
+  }
+}
+
+@keyframes shadowPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(0.85);
+    opacity: 0.18;
+  }
+}
+
+.animate-float-mascot {
+  animation: floatMascot 2.8s ease-in-out infinite;
+}
+
+.animate-shadow-pulse {
+  animation: shadowPulse 2.8s ease-in-out infinite;
+}
+
+
