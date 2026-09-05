@@ -6,14 +6,16 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { title, subject, text, summaryStyle = 'Poin penting', flashcardCount = 12, quizCount = 5, difficulty = 'Sedang' } = body;
 
+    // Check custom API key from request body or header
+    const customApiKey = body.apiKey || req.headers.get('x-gemini-api-key');
+    const apiKey = customApiKey || process.env.GEMINI_API_KEY;
+
     if (!text || text.trim().length === 0) {
       return NextResponse.json(
         { error: 'Teks materi tidak boleh kosong.' },
         { status: 400 }
       );
     }
-
-    const apiKey = process.env.GEMINI_API_KEY;
 
     if (apiKey) {
       try {
@@ -27,11 +29,11 @@ export async function POST(req: NextRequest) {
         });
 
         const prompt = `Anda adalah asisten pendidikan pintar "Ruang Belajar AI" untuk pelajar Indonesia.
-Analisis materi belajar berikut dan buatkan 4 output pembelajaran terstruktur dalam bahasa Indonesia yang ramah, akademis, dan mudah dipahami:
+Analisis materi belajar berikut secara mendalam dan buatkan 4 output pembelajaran terstruktur dalam bahasa Indonesia yang akademis, akurat, dan sangat relevan dengan teks asli:
 1. Ringkasan (gaya: ${summaryStyle})
-2. ${flashcardCount} Kartu Flashcard tanya-jawab
-3. ${quizCount} Soal Kuis Pilihan Ganda (Tingkat: ${difficulty}) dengan 4 opsi, indeks jawaban benar (0-3), pembahasan berbobot, dan topik spesifik
-4. Mind Map (peta konsep terstruktur hierarkis dengan node root, cabang level 1, dan cabang subtopik level 2)
+2. Tepat ${flashcardCount} Kartu Flashcard tanya-jawab. PENTING: Setiap flashcard (front dan back) WAJIB bersumber LANGSUNG dan spesifik dari fakta, definisi, istilah, rumus, atau konsep penting di dalam teks materi di bawah. Dilarang keras menggunakan pertanyaan atau jawaban generik/boilerplate (misal: "Apa poin ke-1?"). Front harus berupa pertanyaan spesifik mengenai istilah/konsep materi, dan back harus berupa jawaban atau penjelasan akurat berdasarkan teks materi.
+3. Tepat ${quizCount} Soal Kuis Pilihan Ganda (Tingkat: ${difficulty}) dengan 4 opsi, indeks jawaban benar (0-3), pembahasan berbobot yang mengutip kalimat materi, dan topik spesifik.
+4. Mind Map (peta konsep terstruktur hierarkis dengan node root, cabang level 1, dan cabang subtopik level 2 yang bersumber dari isi teks).
 
 Judul materi: "${title || 'Materi Belajar'}"
 Mata pelajaran: "${subject || 'Umum'}"
@@ -42,11 +44,11 @@ ${text.slice(0, 15000)}
 """
 
 PENTING:
-- Pastikan semua output berbasis langsung pada isi materi di atas (tergrounding secara akurat).
+- Pastikan seluruh flashcard, kuis, ringkasan, dan mind map berbasis 100% langsung pada isi teks materi di atas (tergrounding secara akurat).
 - correct_index kuis harus integer antara 0 sampai 3.
 - mindmap harus memiliki 1 root (parent_id: null, level: 0), beberapa cabang utama (parent_id: "root", level: 1), dan anak-anak cabang (parent_id mengacu ke id cabang level 1, level: 2).`;
 
-        const CANDIDATE_MODELS = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+        const CANDIDATE_MODELS = ['gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
         let rawJson: any = null;
 
         for (const model of CANDIDATE_MODELS) {
@@ -134,9 +136,9 @@ PENTING:
               }
             });
 
-            // 15-second timeout per candidate to prevent hanging on congested models
+            // 18-second timeout per candidate
             const timeoutPromise = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error(`Timeout on model ${model}`)), 15000)
+              setTimeout(() => reject(new Error(`Timeout on model ${model}`)), 18000)
             );
 
             const response: any = await Promise.race([apiCallPromise, timeoutPromise]);
@@ -157,7 +159,7 @@ PENTING:
               modelError?.status === 429;
 
             if (isTransientError) {
-              console.log(`[Gemini API] Model ${model} unavailable or busy. Trying next model...`);
+              console.log(`[Gemini API] Model ${model} unavailable or busy/quota. Trying next model...`);
               continue;
             }
             console.log(`[Gemini API] Model ${model} error:`, modelError?.message || modelError);
@@ -165,7 +167,6 @@ PENTING:
         }
 
         if (rawJson && rawJson.summary && rawJson.flashcards && rawJson.quiz && rawJson.mindmap) {
-          // Format with IDs
           return NextResponse.json(formatOutput(rawJson, title, subject));
         }
       } catch (genError: any) {
@@ -275,62 +276,66 @@ function defaultNodes(title: string) {
 }
 
 function generateSmartFallback(title: string, subject: string, text: string, fcCount: number, qCount: number) {
-  const sentences = text
-    .split(/[.!?\n]/)
-    .map(s => s.trim())
-    .filter(s => s.length > 20);
+  const paragraphs = text.split(/\n+/).map(p => p.trim()).filter(p => p.length > 20);
+  const rawSentences = text.split(/[.!?\n]/).map(s => s.trim()).filter(s => s.length > 20);
+  const sentences = rawSentences.length > 0 ? rawSentences : [text];
 
-  const cleanSample = sentences.slice(0, 8);
-  const overview = cleanSample.length > 0
-    ? `Materi "${title}" (${subject}) mengulas serangkaian konsep penting: ${cleanSample.slice(0, 2).join('. ')}.`
-    : `Materi "${title}" berisi intisari pembahasan pada bidang studi ${subject} yang terstruktur untuk memudahkan pemahaman peserta didik.`;
+  const overview = paragraphs.length > 0 
+    ? `Materi "${title}" (${subject}) membahas secara mendalam topik utama: ${paragraphs[0].slice(0, 220)}...`
+    : `Materi "${title}" berisi rangkuman pembahasan materi ${subject}.`;
 
-  const key_points = cleanSample.slice(2, 6).length >= 2
-    ? cleanSample.slice(2, 6)
-    : [
-        `Konsep fundamental pada materi ${title} membantu memahami mekanisme dan relasi antar subtopik.`,
-        `Pemahaman terminologi utama sangat penting untuk menguasai penyelesaian soal latihan dan evaluasi.`,
-        `Hubungan sebab-akibat antar komponen menjadi kunci dalam analisis materi ${subject}.`,
-        `Aplikasi praktis dari materi ini sering diujikan dalam kuis dan ujian akademik.`
-      ];
+  const key_points = paragraphs.slice(0, 5).map(p => p.slice(0, 180));
+  if (key_points.length === 0) key_points.push(`Materi ${title} menguraikan konsep dan prinsip dasar ${subject}.`);
 
-  const key_terms = [
-    { term: title.split('—')[0].trim() || 'Konsep Dasar', definition: `Pilar utama dalam pembahasan ${subject}.` },
-    { term: 'Analisis Teoretis', definition: 'Metode penguraian fenomena ke dalam variabel-variabel pembentuknya.' },
-    { term: 'Aplikasi Nyata', definition: 'Penggunaan konsep materi dalam permasalahan dunia nyata dan studi kasus.' }
-  ];
+  const key_terms = sentences.slice(0, 4).map((s, idx) => {
+    const parts = s.split(':');
+    if (parts.length >= 2) {
+      return { term: parts[0].trim().slice(0, 40), definition: parts[1].trim().slice(0, 140) };
+    }
+    const words = s.split(' ');
+    return { term: words.slice(0, 3).join(' ') || `Konsep ${idx + 1}`, definition: s.slice(0, 140) };
+  });
 
   const remember = [
-    `Fokuslah pada keterkaitan antar variabel kunci pada ${title}.`,
-    `Ulangi flashcard secara rutin untuk memperkuat daya ingat jangka panjang.`
+    `Fokuskan pemahaman pada inti materi: ${title}.`,
+    `Gunakan flashcard ini untuk melatih memori jangka panjang secara aktif.`
   ];
 
   const flashcards = [];
-  const tags = ['DEFINISI', 'HUKUM & PRINSIP', 'FAKTOR', 'APLIKASI', 'RUMUS & CIRI'];
-  for (let i = 0; i < Math.min(fcCount, 12); i++) {
-    const s = cleanSample[i % cleanSample.length] || `Konsep penting ke-${i + 1} dari ${title}`;
+  const tags = ['KONSEP UTAMA', 'DEFINISI', 'PRINSIP', 'ANALISIS', 'APLIKASI'];
+  for (let i = 0; i < Math.min(fcCount, 15); i++) {
+    const sent = sentences[i % sentences.length];
+    const words = sent.split(' ');
+    const term = words.slice(0, 4).join(' ');
     flashcards.push({
       id: `fc-gen-${Date.now()}-${i}`,
-      front: `Apa inti penting dari: "${s.slice(0, 80)}..."?`,
-      back: `Penjelasan mendalam: ${s}. Hal ini penting untuk dipahami secara menyeluruh dalam topik ${subject}.`,
+      front: `Jelaskan poin penting mengenai: "${term}..."`,
+      back: `Berdasarkan teks materi "${title}" (${subject}): ${sent}`,
       tag: tags[i % tags.length],
       status: 'unseen'
     });
   }
 
   const quiz = [];
-  for (let i = 0; i < Math.min(qCount, 5); i++) {
+  for (let i = 0; i < Math.min(qCount, 10); i++) {
+    const correctSent = sentences[i % sentences.length];
+    const wrong1 = sentences[(i + 1) % sentences.length];
+    const wrong2 = sentences[(i + 2) % sentences.length];
+    const wrong3 = sentences[(i + 3) % sentences.length];
+
+    const options = [
+      correctSent.slice(0, 160),
+      wrong1.slice(0, 160),
+      wrong2.slice(0, 160),
+      wrong3.slice(0, 160)
+    ];
+
     quiz.push({
       id: `q-gen-${Date.now()}-${i}`,
-      question: `Berdasarkan materi ${title}, manakah pernyataan yang paling tepat mengenai poin ke-${i + 1}?`,
-      options: [
-        `Pernyataan bahwa konsep ini beroperasi sesuai prinsip ilmiah pada ${subject}`,
-        `Variabel pendukung tidak memiliki pengaruh terhadap hasil akhir`,
-        `Semua faktor berubah secara bersamaan tanpa aturan tertentu`,
-        `Materi ini hanya berlaku dalam situasi laboratorium terbatas`
-      ],
+      question: `Berdasarkan materi "${title}", manakah pernyataan yang paling akurat sesuai teks?`,
+      options: options as [string, string, string, string],
       correct_index: 0,
-      explanation: `Jawaban A tepat karena berlandaskan pada prinsip ilmiah yang tertera dalam teks materi ${title}.`,
+      explanation: `Pernyataan ini valid dan bersumber langsung dari materi ${title} (${subject}).`,
       topic: subject
     });
   }

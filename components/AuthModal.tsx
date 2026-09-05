@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { X, Lock, User, ArrowRight, CheckCircle2, AlertCircle } from 'lucide-react';
-import { loginUser, registerUser, UserAccount } from '@/lib/auth';
+import { loginUserAsync, registerUserAsync, UserAccount } from '@/lib/auth';
 import { AppLogo } from '@/components/AppLogo';
 
 interface AuthModalProps {
@@ -22,41 +22,44 @@ export function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode = 'login
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccessMsg(null);
     setIsLoading(true);
 
-    setTimeout(() => {
+    try {
       if (mode === 'register') {
-        const result = registerUser(username, password);
+        const result = await registerUserAsync(username, password);
         if (!result.success || !result.user) {
           setError(result.error || 'Pendaftaran gagal');
           setIsLoading(false);
           return;
         }
-        setSuccessMsg('Akun berhasil dibuat! Mengalihkan ke dashboard...');
+        setSuccessMsg('Akun berhasil dibuat & tersimpan di database server!');
         setTimeout(() => {
           setIsLoading(false);
           onAuthSuccess(result.user!, true);
           onClose();
         }, 500);
       } else {
-        const result = loginUser(username, password);
+        const result = await loginUserAsync(username, password);
         if (!result.success || !result.user) {
           setError(result.error || 'Login gagal');
           setIsLoading(false);
           return;
         }
-        setSuccessMsg('Berhasil masuk! Mengalihkan...');
+        setSuccessMsg('Berhasil masuk dari database server!');
         setTimeout(() => {
           setIsLoading(false);
           onAuthSuccess(result.user!, false);
           onClose();
         }, 400);
       }
-    }, 300);
+    } catch (err: any) {
+      setError(err?.message || 'Terjadi kesalahan sistem');
+      setIsLoading(false);
+    }
   };
 
   return (

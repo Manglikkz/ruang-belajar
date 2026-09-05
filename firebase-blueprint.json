@@ -1,0 +1,42 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User account profile and credentials",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string", "description": "Unique username" },
+        "name": { "type": "string", "description": "Display name of the user" },
+        "password": { "type": "string", "description": "User password" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of creation" }
+      },
+      "required": ["username", "name", "createdAt"]
+    },
+    "Material": {
+      "title": "Material",
+      "description": "Study material with flashcards, quizzes, and mindmap isolated per user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Material unique identifier" },
+        "title": { "type": "string", "description": "Material title" },
+        "subject": { "type": "string", "description": "Subject or course name" },
+        "source_type": { "type": "string", "description": "Type of source material" },
+        "status": { "type": "string", "description": "Processing status" },
+        "created_at": { "type": "string", "description": "Creation timestamp" },
+        "last_opened_at": { "type": "string", "description": "Last opened timestamp" },
+        "progress_percent": { "type": "number", "description": "Overall study progress percentage" }
+      },
+      "required": ["id", "title", "subject", "source_type", "status", "created_at"]
+    }
+  },
+  "firestore": {
+    "/users/{username}": {
+      "schema": "User",
+      "description": "Collection of user accounts"
+    },
+    "/users/{username}/materials/{materialId}": {
+      "schema": "Material",
+      "description": "Isolated study materials belonging strictly to each individual user"
+    }
+  }
+}

@@ -7,7 +7,6 @@ export interface UserAccount {
   createdAt: string;
 }
 
-const USERS_STORAGE_KEY = 'rb_registered_users';
 const CURRENT_USER_KEY = 'rb_current_user_session';
 
 function subscribeToAuth(callback: () => void) {
@@ -37,19 +36,6 @@ export function useCurrentUser(): UserAccount | null {
   }, [sessionString]);
 }
 
-export function getStoredUsers(): UserAccount[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(USERS_STORAGE_KEY);
-    if (raw) {
-      return JSON.parse(raw);
-    }
-  } catch (e) {
-    console.error('Failed to get users', e);
-  }
-  return [];
-}
-
 export function getCurrentUser(): UserAccount | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -77,7 +63,7 @@ export function setCurrentUserSession(user: UserAccount | null) {
   }
 }
 
-export function registerUser(username: string, password: string): { success: boolean; error?: string; user?: UserAccount } {
+export async function registerUserAsync(username: string, password: string): Promise<{ success: boolean; error?: string; user?: UserAccount }> {
   const cleanUsername = username.trim().toLowerCase();
   if (!cleanUsername || cleanUsername.length < 3) {
     return { success: false, error: 'Username minimal 3 karakter' };
@@ -86,34 +72,29 @@ export function registerUser(username: string, password: string): { success: boo
     return { success: false, error: 'Password minimal 4 karakter' };
   }
 
-  const users = getStoredUsers();
-  const existing = users.find((u) => u.username.toLowerCase() === cleanUsername);
-  if (existing) {
-    return { success: false, error: 'Username sudah digunakan, silakan gunakan username lain' };
-  }
-
-  const displayName = username.trim().charAt(0).toUpperCase() + username.trim().slice(1);
-  const newUser: UserAccount = {
-    username: cleanUsername,
-    name: displayName,
-    password,
-    createdAt: new Date().toISOString()
-  };
-
-  users.push(newUser);
   try {
-    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-    // Set user's materials as strictly empty array [] for every new user!
-    localStorage.setItem(`rb_user_materials_${cleanUsername}`, JSON.stringify([]));
-    setCurrentUserSession(newUser);
-  } catch (e) {
-    return { success: false, error: 'Gagal menyimpan data akun' };
-  }
+    const res = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'register', username: cleanUsername, password })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Pendaftaran gagal' };
+    }
 
-  return { success: true, user: newUser };
+    const newUser: UserAccount = data.user;
+    setCurrentUserSession(newUser);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`rb_user_materials_${cleanUsername}`, JSON.stringify([]));
+    }
+    return { success: true, user: newUser };
+  } catch (err: any) {
+    return { success: false, error: 'Gagal terhubung ke database server' };
+  }
 }
 
-export function loginUser(username: string, password: string): { success: boolean; error?: string; user?: UserAccount } {
+export async function loginUserAsync(username: string, password: string): Promise<{ success: boolean; error?: string; user?: UserAccount }> {
   const cleanUsername = username.trim().toLowerCase();
   if (!cleanUsername) {
     return { success: false, error: 'Masukkan username' };
@@ -122,19 +103,23 @@ export function loginUser(username: string, password: string): { success: boolea
     return { success: false, error: 'Masukkan password' };
   }
 
-  const users = getStoredUsers();
-  const found = users.find((u) => u.username.toLowerCase() === cleanUsername);
+  try {
+    const res = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'login', username: cleanUsername, password })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Login gagal' };
+    }
 
-  if (!found) {
-    return { success: false, error: 'Username tidak ditemukan. Silakan daftar terlebih dahulu.' };
+    const user: UserAccount = data.user;
+    setCurrentUserSession(user);
+    return { success: true, user };
+  } catch (err: any) {
+    return { success: false, error: 'Gagal terhubung ke database server' };
   }
-
-  if (found.password && found.password !== password) {
-    return { success: false, error: 'Password salah. Silakan coba lagi.' };
-  }
-
-  setCurrentUserSession(found);
-  return { success: true, user: found };
 }
 
 export function logoutUser() {

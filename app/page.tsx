@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useSyncExternalStore, useMemo } from 'react';
+import React, { useState, useEffect, useSyncExternalStore, useMemo } from 'react';
 import { Material } from '@/lib/types';
 import { useCurrentUser, logoutUser, UserAccount } from '@/lib/auth';
 import { LandingPage } from '@/components/LandingPage';
@@ -33,6 +33,22 @@ export default function Home() {
   const [currentNav, setCurrentNav] = useState<NavItemKey>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Fetch materials from server database on mount or user change
+  useEffect(() => {
+    if (currentUser?.username) {
+      fetch(`/api/materials?username=${encodeURIComponent(currentUser.username)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && Array.isArray(data.materials)) {
+            const storageKey = `rb_user_materials_${currentUser.username.toLowerCase()}`;
+            localStorage.setItem(storageKey, JSON.stringify(data.materials));
+            window.dispatchEvent(new Event('rb_materials_change'));
+          }
+        })
+        .catch(err => console.error('Failed to load materials from database', err));
+    }
+  }, [currentUser?.username]);
+
   // Materials data subscribed from localStorage for the active user
   const materialsRaw = useSyncExternalStore(
     subscribeToMaterials,
@@ -58,13 +74,20 @@ export default function Home() {
   // Upload modal
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
 
-  // Save to local storage on update for the active user
+  // Save to local storage and server database on update for the active user
   const saveMaterials = (updated: Material[]) => {
     if (!currentUser || typeof window === 'undefined') return;
     try {
       const storageKey = `rb_user_materials_${currentUser.username.toLowerCase()}`;
       localStorage.setItem(storageKey, JSON.stringify(updated));
       window.dispatchEvent(new Event('rb_materials_change'));
+
+      // Save to server database API
+      fetch('/api/materials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: currentUser.username, materials: updated })
+      }).catch(err => console.error('Failed to sync materials with database', err));
     } catch (e) {
       console.error('Failed to save materials', e);
     }

@@ -132,6 +132,19 @@ export function Sidebar({
           })}
         </nav>
 
+        {/* Database Status Indicator */}
+        <div className="px-4 py-2 border-t border-slate-100 bg-slate-50/70">
+          <div className="flex items-center justify-between text-[11px] text-slate-500">
+            <span className="flex items-center gap-1.5 font-medium">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
+              Firebase Firestore
+            </span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
+              Cloud Sync
+            </span>
+          </div>
+        </div>
+
         {/* User Profile Card (Matches Image 4, now fully interactive) */}
         <div className="p-4 border-t border-slate-100 bg-slate-50/50 relative" ref={userMenuRef}>
           <div
