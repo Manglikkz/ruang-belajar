@@ -1,36 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, setDoc, getDocs, collection } from 'firebase/firestore';
-import fs from 'fs';
-import path from 'path';
 
-const DB_DIR = path.join(process.cwd(), 'data');
-const USERS_DB_FILE = path.join(DB_DIR, 'users_db.json');
-
-function ensureDb() {
-  if (!fs.existsSync(DB_DIR)) {
-    fs.mkdirSync(DB_DIR, { recursive: true });
-  }
-  if (!fs.existsSync(USERS_DB_FILE)) {
-    fs.writeFileSync(USERS_DB_FILE, JSON.stringify([]), 'utf-8');
-  }
-}
-
-function readUsers(): any[] {
-  try {
-    ensureDb();
-    const raw = fs.readFileSync(USERS_DB_FILE, 'utf-8');
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeUsers(users: any[]) {
-  ensureDb();
-  fs.writeFileSync(USERS_DB_FILE, JSON.stringify(users, null, 2), 'utf-8');
-}
+// In-memory cache for fast lookup within the container instance
+const memoryUsersCache = new Map<string, any>();
 
 export async function GET() {
   try {
@@ -39,6 +12,7 @@ export async function GET() {
     if (!snapshot.empty) {
       const users = snapshot.docs.map(d => {
         const data = d.data();
+        memoryUsersCache.set(data.username.toLowerCase(), data);
         return { username: data.username, name: data.name, createdAt: data.createdAt };
       });
       return NextResponse.json({ users, source: 'firebase_firestore' });
@@ -47,9 +21,13 @@ export async function GET() {
     console.warn('[Firebase Firestore] GET users error:', err);
   }
 
-  const users = readUsers();
-  const safeUsers = users.map(u => ({ username: u.username, name: u.name, createdAt: u.createdAt }));
-  return NextResponse.json({ users: safeUsers, source: 'local_cache' });
+  // Return from in-memory cache if available
+  const cachedUsers = Array.from(memoryUsersCache.values()).map(u => ({
+    username: u.username,
+    name: u.name,
+    createdAt: u.createdAt
+  }));
+  return NextResponse.json({ users: cachedUsers, source: 'memory_cache' });
 }
 
 export async function POST(req: NextRequest) {
@@ -70,21 +48,27 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: false, error: 'Password minimal 4 karakter' }, { status: 400 });
       }
 
-      // Check existence in Firebase Firestore
+      // 1. Check in memory cache first
+      if (memoryUsersCache.has(cleanUsername)) {
+        return NextResponse.json({
+          success: false,
+          error: 'Username sudah terdaftar. Silakan gunakan username lain atau login.'
+        }, { status: 400 });
+      }
+
+      // 2. Check existence in Firebase Firestore
       try {
         const userDocRef = doc(db, 'users', cleanUsername);
         const userSnap = await getDoc(userDocRef);
         if (userSnap.exists()) {
-          return NextResponse.json({ success: false, error: 'Username sudah terdaftar di database Firebase. Silakan gunakan username lain atau login.' }, { status: 400 });
+          memoryUsersCache.set(cleanUsername, userSnap.data());
+          return NextResponse.json({
+            success: false,
+            error: 'Username sudah terdaftar di database Firebase. Silakan gunakan username lain atau login.'
+          }, { status: 400 });
         }
       } catch (e) {
-        console.warn('[Firebase Firestore] Check user error:', e);
-      }
-
-      // Also check local cache
-      const localUsers = readUsers();
-      if (localUsers.some(u => u.username.toLowerCase() === cleanUsername)) {
-        return NextResponse.json({ success: false, error: 'Username sudah terdaftar. Silakan gunakan username lain atau login.' }, { status: 400 });
+        console.warn('[Firebase Firestore] Check user existence error:', e);
       }
 
       const displayName = cleanUsername.charAt(0).toUpperCase() + cleanUsername.slice(1);
@@ -95,18 +79,17 @@ export async function POST(req: NextRequest) {
         createdAt: new Date().toISOString()
       };
 
-      // Persist to Firebase Firestore
+      // 3. Persist to Firebase Firestore
       try {
         const userDocRef = doc(db, 'users', cleanUsername);
         await setDoc(userDocRef, newUser);
-        console.log(`[Firebase Firestore] User ${cleanUsername} created successfully`);
-      } catch (fsErr) {
+        console.log(`[Firebase Firestore] User ${cleanUsername} registered successfully`);
+      } catch (fsErr: any) {
         console.error('[Firebase Firestore] User create error:', fsErr);
       }
 
-      // Persist to local cache
-      localUsers.push(newUser);
-      writeUsers(localUsers);
+      // Keep in memory cache
+      memoryUsersCache.set(cleanUsername, newUser);
 
       return NextResponse.json({
         success: true,
@@ -115,31 +98,34 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'login') {
-      let foundUser: any = null;
+      let foundUser: any = memoryUsersCache.get(cleanUsername) || null;
 
-      // Check Firebase Firestore
-      try {
-        const userDocRef = doc(db, 'users', cleanUsername);
-        const userSnap = await getDoc(userDocRef);
-        if (userSnap.exists()) {
-          foundUser = userSnap.data();
+      // Check Firebase Firestore if not in memory
+      if (!foundUser) {
+        try {
+          const userDocRef = doc(db, 'users', cleanUsername);
+          const userSnap = await getDoc(userDocRef);
+          if (userSnap.exists()) {
+            foundUser = userSnap.data();
+            memoryUsersCache.set(cleanUsername, foundUser);
+          }
+        } catch (e) {
+          console.warn('[Firebase Firestore] Login getDoc error:', e);
         }
-      } catch (e) {
-        console.warn('[Firebase Firestore] Login getDoc error:', e);
-      }
-
-      // Fallback to local cache if not found
-      if (!foundUser) {
-        const localUsers = readUsers();
-        foundUser = localUsers.find(u => u.username.toLowerCase() === cleanUsername);
       }
 
       if (!foundUser) {
-        return NextResponse.json({ success: false, error: 'Username tidak ditemukan di database. Silakan daftar terlebih dahulu.' }, { status: 404 });
+        return NextResponse.json({
+          success: false,
+          error: 'Username tidak ditemukan di database. Silakan daftar terlebih dahulu.'
+        }, { status: 404 });
       }
 
       if (foundUser.password && foundUser.password !== password) {
-        return NextResponse.json({ success: false, error: 'Password salah. Silakan coba lagi.' }, { status: 401 });
+        return NextResponse.json({
+          success: false,
+          error: 'Password salah. Silakan coba lagi.'
+        }, { status: 401 });
       }
 
       return NextResponse.json({
@@ -148,8 +134,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ success: false, error: 'Invalid action' }, { status: 400 });
+    return NextResponse.json({ success: false, error: 'Aksi tidak valid' }, { status: 400 });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message || 'Server error' }, { status: 500 });
+    console.error('[API Users] Unhandled error:', err);
+    return NextResponse.json({ success: false, error: err?.message || 'Server error' }, { status: 500 });
   }
 }
